@@ -1,0 +1,125 @@
+﻿Set-ExecutionPolicy Unrestricted
+Import-Module ActiveDirectory
+cls
+###################################################
+#Variable global:
+
+$Motdepass = "a654654+"
+$pathPROFIL="\\SV1PARIS\ACME-User$"
+$groupeNom = "ACME"
+$pathUserDrive="\\SV1PARIS\ACME-UserDrive$"
+$pathOU="OU=New User,OU=Immeuble RP,DC=acme,DC=fr"
+$homeDRIVE='U:'
+
+##################################################
+#gestion des erreurs
+    Trap {
+         #continue
+    }
+
+###################################################
+#FUNCTION: Creer un nouvel utilisateur
+#ATTENTION: besoin déclarer variable $Motdepass avant
+
+function newUser-pass {
+    $prenomUser=Read-Host -Prompt "Entrer Prenom Utilisateur"
+    $nomUser=Read-Host -Prompt "Entrer Nom Utilisateur"
+
+    $nomUserUpper=$nomUser.ToUpper()
+    $firstCharacterPrenom=$prenomUser[0]
+    $account= "$firstCharacterPrenom$nomUser"
+    $email = "$account@acme.fr"
+    $Password= $args[0]
+    $SecurePassword=ConvertTo-SecureString $Password -AsPlainText -Force
+    New-ADUser -Name "$prenomUser $nomUserUpper" -GivenName $prenomUser -DisplayName "$prenomUser $nomUserUpper" -Surname $nomUserUpper -SamAccountName $account -UserPrincipalName $email -Enabled $true -Path "$pathOU" -AccountPassword $SecurePassword
+    Get-ADUser $account | Set-ADUser -ChangePasswordAtLogon $true -ProfilePath "$pathPROFIL\$account"
+    Get-ADUser $account | Set-ADUser -HomeDrive 'U:' -HomeDirectory $pathUserDrive\$account
+
+    return $account
+}
+
+
+
+
+###################################################
+#FUNCTION: Creer un folder de nouveau utilisateur avec sharing([Administrator] & [account]) security([Administrator] & [account])
+#ATTENTION: besoin qq variable du fonction avant et dossier ACME-NewUser creé
+
+
+function makeaFolder4UserWithPermission {
+
+    $pathUserD=$args[0]
+    $acc=$args[1]
+    New-Item "$pathUserD\$acc" –ItemType Directory
+
+    $acl = Get-Acl "$pathUserD\$acc"
+    $acl
+    $acl.SetAccessRuleProtection($True, $False)
+
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators","FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+
+    $acl.AddAccessRule($rule)
+
+
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("CREATOR OWNER","FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+
+    $acl.AddAccessRule($rule)
+
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+
+    $acl.AddAccessRule($rule)
+
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($acc,"FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+
+    $acl.AddAccessRule($rule)
+
+
+    Set-Acl "$pathUserD\$acc" $acl
+
+    Get-Acl "$pathUserD\$acc"  | Format-List
+
+}
+
+
+
+###################################################
+#FUNCTION: Add member to groupe
+#ATTENTION: besoin qq variable du fonction avant
+
+function addMemberToGroup {
+    $GroupMembership = (Get-ADUser $args[0] -Properties MemberOf).MemberOf | Where-Object { $_ -match "CN=$args[1]" }
+    if ( $null -eq $GroupMembership ) {
+	    $msg = "Adding {0} to {1}" -f $args[0], $args[1]
+	    Write-Verbose $msg
+	    try {
+		    Add-ADGroupMember -Identity $args[1] -Members $args[0] -Verbose
+	    }
+	    catch {
+		    Write-Host "Error encountered adding user to group $OUName"
+		    $_.Exception.Message
+		    $_.Exception.StackTrace
+		    $_.ScriptStackTrace
+		    $_.Exception.ErrorRecord.InvocationInfo.Line
+	    }
+    }
+else {
+	$msg = "User $args[0] is already a member of Group: {0}" -f $args[1]
+	Write-Warning $msg
+    }
+}
+
+
+###################################################
+#Principal:
+
+$accountNewUser = newUser-pass $Motdepass
+echo "COMPTE $accountNewUser CREE"
+$pathFolder=$pathUserDrive
+$pathFolder
+$f=makeaFolder4UserWithPermission $pathFolder $accountNewUser
+$f
+addMemberToGroup $accountNewUser $groupeNom
+
+
+echo "`n`nUtilisateur créé avec succès`n`n"
+sleep (50000)
